@@ -167,3 +167,87 @@
     ERR-BENEFICIARY-NOT-FOUND
   )
 )
+
+;; TRANSPARENT DONATION PROCESSING ENGINE
+
+;; Execute donations with automatic balance reconciliation
+(define-public (donate
+    (beneficiary-id uint)
+    (amount uint)
+  )
+  (let ((beneficiary (unwrap! (get-beneficiary beneficiary-id) ERR-BENEFICIARY-NOT-FOUND)))
+    (if (and
+        (> amount u0)
+        (< beneficiary-id (+ (var-get beneficiary-count) u1))
+        (is-some (map-get? beneficiaries { id: beneficiary-id }))
+      )
+      (match (stx-transfer? amount tx-sender (as-contract tx-sender))
+        success (begin
+          (map-set beneficiaries { id: beneficiary-id }
+            (merge beneficiary { received-amount: (+ (get received-amount beneficiary) amount) })
+          )
+          (map-set donations { id: (+ (var-get donation-count) u1) } {
+            donor: tx-sender,
+            beneficiary-id: beneficiary-id,
+            amount: amount,
+            timestamp: stacks-block-height,
+          })
+          (var-set donation-count (+ (var-get donation-count) u1))
+          (ok true)
+        )
+        error
+        ERR-INSUFFICIENT-FUNDS
+      )
+      ERR-INVALID-INPUT
+    )
+  )
+)
+
+;; Retrieve donation transaction details for audit transparency
+(define-read-only (get-donation-by-id (donation-id uint))
+  (match (map-get? donations { id: donation-id })
+    donation (ok donation)
+    ERR-NOT-FOUND
+  )
+)
+
+;; Platform-wide donation statistics
+(define-read-only (get-donation-count)
+  (ok (var-get donation-count))
+)
+
+;; MILESTONE-BASED FUND UTILIZATION MANAGEMENT
+
+;; Create accountability-driven utilization plans
+(define-public (add-utilization
+    (beneficiary-id uint)
+    (description (string-utf8 255))
+    (amount uint)
+  )
+  (let ((beneficiary (unwrap! (get-beneficiary beneficiary-id) ERR-BENEFICIARY-NOT-FOUND)))
+    (if (and
+        (is-authorized tx-sender ROLE-ADMIN)
+        (> (len description) u0)
+        (> amount u0)
+        (< beneficiary-id (+ (var-get beneficiary-count) u1))
+      )
+      (let (
+          (milestone (+ (get-last-milestone beneficiary-id) u1))
+          (utilization-id (+ (var-get utilization-count) u1))
+        )
+        (begin
+          (map-set utilization { id: utilization-id } {
+            beneficiary-id: beneficiary-id,
+            milestone: milestone,
+            description: description,
+            amount: amount,
+            status: "pending",
+          })
+          (var-set utilization-count utilization-id)
+          (ok milestone)
+        )
+      )
+      ERR-INVALID-INPUT
+    )
+  )
+)
